@@ -15,12 +15,12 @@ L298NX2 front_motors(EN_A, IN1_A, IN2_A, EN_B, IN1_B, IN2_B);
 Encoder front_right_encoder(2, 3);
 
 // PID constants
-float Kp = 3.1; // Proportional gain
-float Ki = 0.01; // Integral gain
+float Kp = 3.1;  // Proportional gain
+float Ki = 0.01;  // Integral gain
 float Kd = 0.1; // Derivative gain
 
 // PID variables
-long targetPosition = 1440; // Target encoder position
+long targetPosition = 1440;  // Target encoder position
 long lastPosition = 0;
 float integral = 0;
 float previousError = 0;
@@ -32,69 +32,70 @@ void performPIDControl();
 void updateMotorSpeed(float output);
 bool checkTargetPosition(float error);
 
-void setup()
-{
+void setup() {
     Serial.begin(115200);
-    setupMotors(); // Initialize motors
+    setupMotors();  // Initialize motors
 }
 
 long oldPosition = -999;
 
-void loop()
-{
-    readEncoder(); // Read the encoder position
-    performPIDControl(); // Perform PID control
+void loop() {
+    readEncoder();  // Read the encoder position
+    performPIDControl();  // Perform PID control
     delay(10); // Small delay to prevent overload
 }
 
-void setupMotors()
-{
+void setupMotors() {
     front_motors.stop(); // Ensure motors are stopped initially
 }
 
-void readEncoder()
-{
+void readEncoder() {
     const long currentPosition = front_right_encoder.read();
-    if (currentPosition != oldPosition)
-    {
+    if (currentPosition != oldPosition) {
         oldPosition = currentPosition;
         Serial.println("Encoder Position: " + String(currentPosition));
     }
 }
 
-void performPIDControl()
-{
+void performPIDControl() {
     const long currentPosition = front_right_encoder.read();
     const float error = targetPosition - currentPosition;
-    integral = constrain(integral + error, -1000, 1000);
-    const float output = (Kp * error) + (Ki * integral) + (Kd * (error - previousError));
-    previousError = error;
+    integral += error;
+    integral = constrain(integral, -1000, 1000);  // Prevent integral windup
+    const float derivative = error - previousError;
+    const float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
 
-    if (checkTargetPosition(error))
-    {
-        front_motors.stop();
+    // Update motor speed
+    updateMotorSpeed(output);
+
+    Serial.println("Error: " + String(error));
+    Serial.println("Motor Speed: " + String(constrain(abs(output), 0, 255)));
+    Serial.println();
+
+    // Check if target position is reached
+    if (checkTargetPosition(error)) {
+        Serial.println("Target reached. Stopping motor.");
+        front_motors.stop();  // Ensure motors are stopped
     }
-    else
-    {
-        updateMotorSpeed(output);
-    }
+
+    previousError = error;  // Store current error for next loop
 }
 
-void updateMotorSpeed(const float output)
-{
+void updateMotorSpeed(float output) {
     const int motorSpeed = constrain(abs(output), 0, 255);
-    if (output >= 0)
-    {
+    if (output >= 0) {
         front_motors.forward();
-    }
-    else
-    {
+    } else {
         front_motors.backward();
     }
     front_motors.setSpeed(motorSpeed);
 }
 
-bool checkTargetPosition(const float error)
-{
-    return abs(error) <= 10;
+bool checkTargetPosition(float error) {
+    constexpr long tolerance = 10;
+    if (abs(error) <= tolerance) {
+        front_motors.stop();  // Stop when the target is reached
+        return true;
+    }
+    return false;
 }
