@@ -1,71 +1,3 @@
-// #include <Arduino.h>
-//
-// #define enA 8
-// #define stepper1 9
-// #define stepper2 10
-//
-// #define outputA 2
-// #define outputB 3
-//
-// int counter = 0;
-// int aState;
-// int aLastState;
-//
-// void ISR_encoder() {
-//     aState = digitalRead(outputA); // Reads the "current" state of the outputA
-//
-//     if (counter > -240 && counter < 240) {
-//         if (aState != aLastState) {
-//             // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-//             if (digitalRead(outputB) != aState) {
-//                 counter++;
-//             } else {
-//                 counter--;
-//             }
-//         }
-//     } else {
-//         digitalWrite(enA, 0);
-//     }
-//
-//     Serial.println(counter);
-//
-//     aLastState = aState; // Updates the previous state of the outputA with the current state
-// }
-//
-// void setInitialRotation() {
-//     digitalWrite(stepper1, HIGH);
-//     digitalWrite(stepper2, LOW);
-// }
-//
-// void rotateCW() {
-//     // Implement your clockwise rotation logic here
-// }
-//
-// void rotateCCW() {
-//     // Implement your counter-clockwise rotation logic here
-// }
-//
-// void setup()
-// {
-//     Serial.begin(9600);
-//     pinMode(outputA, INPUT);
-//     pinMode(outputB, INPUT);
-//     pinMode(enA, OUTPUT);
-//     pinMode(stepper1, OUTPUT);
-//     pinMode(stepper2, OUTPUT);
-//
-//     setInitialRotation();
-//     aLastState = digitalRead(outputA);
-//     digitalWrite(enA, 255);
-//
-//     // Attach the interrupt service routine (ISR) to the interrupt pin
-//     attachInterrupt(digitalPinToInterrupt(outputA), ISR_encoder, CHANGE);  // CHANGE mode for both rising and falling edges
-// }
-//
-// void loop() {
-// }
-
-
 #include <Arduino.h>
 #include <L298NX2.h>
 #define ENCODER_OPTIMIZE_INTERRUPTS
@@ -82,27 +14,88 @@
 L298NX2 front_motors(EN_A, IN1_A, IN2_A, EN_B, IN1_B, IN2_B);
 Encoder front_right_encoder(2, 3);
 
-void setup()
-{
-    Serial.begin(11520);
+// PID constants
+float Kp = 3.1;  // Proportional gain
+float Ki = 0.01;  // Integral gain
+float Kd = 0.1; // Derivative gain
 
-    front_motors.setSpeed(255);
-    front_motors.forward();
+// PID variables
+long targetPosition = 1440;  // Target encoder position
+long lastPosition = 0;
+float integral = 0;
+float previousError = 0;
+
+// Function prototypes
+void setupMotors();
+void readEncoder();
+void performPIDControl();
+void updateMotorSpeed(float output);
+bool checkTargetPosition(float error);
+
+void setup() {
+    Serial.begin(11520);
+    setupMotors();  // Initialize motors
 }
 
-long oldPosition  = -999;
+long oldPosition = -999;
 
-void loop()
-{
-    long newPosition = front_right_encoder.read();
-    if (newPosition != oldPosition) {
-        oldPosition = newPosition;
-        Serial.println(newPosition);
+void loop() {
+    readEncoder();  // Read the encoder position
+    performPIDControl();  // Perform PID control
+    delay(10); // Small delay to prevent overload
+}
+
+void setupMotors() {
+    front_motors.stop(); // Ensure motors are stopped initially
+}
+
+void readEncoder() {
+    const long currentPosition = front_right_encoder.read();
+    if (currentPosition != oldPosition) {
+        oldPosition = currentPosition;
+        Serial.println("Encoder Position: " + String(currentPosition));
+    }
+}
+
+void performPIDControl() {
+    const long currentPosition = front_right_encoder.read();
+    const float error = targetPosition - currentPosition;
+    integral += error;
+    integral = constrain(integral, -1000, 1000);  // Prevent integral windup
+    const float derivative = error - previousError;
+    const float output = (Kp * error) + (Ki * integral) + (Kd * derivative);
+
+    // Update motor speed
+    updateMotorSpeed(output);
+
+    // Debugging output
+    Serial.println("Error: " + String(error));
+    Serial.println("Motor Speed: " + String(constrain(abs(output), 0, 255)));
+    Serial.println();
+
+    // Check if target position is reached
+    if (checkTargetPosition(error)) {
+        Serial.println("Target reached. Stopping motor.");
     }
 
-    if (newPosition > 1440)
-    {
-        front_motors.stop();
-    }
+    previousError = error;  // Store current error for next loop
+}
 
+void updateMotorSpeed(float output) {
+    const int motorSpeed = constrain(abs(output), 0, 255);
+    if (output >= 0) {
+        front_motors.forward();
+    } else {
+        front_motors.backward();
+    }
+    front_motors.setSpeed(motorSpeed);
+}
+
+bool checkTargetPosition(float error) {
+    constexpr long tolerance = 5;
+    if (abs(error) <= tolerance) {
+        front_motors.stop();  // Stop when the target is reached
+        return true;
+    }
+    return false;
 }
