@@ -3,12 +3,11 @@
 #include <Arduino.h>
 #include <L298NX2.h>
 #include <Encoder.h>
-#include <ArduinoJson.h>
 
 // Pins for L298N motor driver (front left)
-#define EN_A 7
-#define IN1_A 8
-#define IN2_A 9
+#define EN_A 9
+#define IN1_A 7
+#define IN2_A 8
 
 // Pins for L298N motor driver (front right)
 #define EN_B 4
@@ -43,6 +42,10 @@ float Kd = 0.1; // Derivative gain
 float integral_FL = 0, integral_FR = 0, integral_BL = 0, integral_BR = 0;
 float previousError_FL = 0, previousError_FR = 0, previousError_BL = 0, previousError_BR = 0;
 
+// Variables to track time and position for velocity calculation
+long prevTime = 0;
+long prevPosition_FL = 0, prevPosition_FR = 0, prevPosition_BL = 0, prevPosition_BR = 0;
+
 // Function prototypes
 void setupMotors();
 void readEncoder();
@@ -74,20 +77,31 @@ void setupMotors()
 
 void performPIDControl(const float targetVelocity_FL, const float targetVelocity_FR, const float targetVelocity_BL, const float targetVelocity_BR)
 {
-    // Read current encoder position
-    const long currentPosition = front_right_encoder.read();
+    const long currentTime = millis();
+    const float deltaTime = (currentTime - prevTime) / 1000.0;  // Time in seconds
+
+    // Read current encoder positions
+    const long currentPosition_FL = front_left_encoder.read();
+    const long currentPosition_FR = front_right_encoder.read();
+    const long currentPosition_BL = back_left_encoder.read();
+    const long currentPosition_BR = back_right_encoder.read();
+
+    const float velocity_FL = (currentPosition_FL - prevPosition_FL) / deltaTime;
+    const float velocity_FR = (currentPosition_FR - prevPosition_FR) / deltaTime;
+    const float velocity_BL = (currentPosition_BL - prevPosition_BL) / deltaTime;
+    const float velocity_BR = (currentPosition_BR - prevPosition_BR) / deltaTime;
 
     // Calculate errors
-    const float error_FL = targetVelocity_FL - static_cast<float>(currentPosition);
-    const float error_FR = targetVelocity_FR - static_cast<float>(currentPosition);
-    const float error_BL = targetVelocity_BL - static_cast<float>(currentPosition);
-    const float error_BR = targetVelocity_BR - static_cast<float>(currentPosition);
+    const float error_FL = targetVelocity_FL - velocity_FL;
+    const float error_FR = targetVelocity_FR - velocity_FR;
+    const float error_BL = targetVelocity_BL - velocity_BL;
+    const float error_BR = targetVelocity_BR - velocity_BR;
 
     // Update integrals
-    integral_FL += error_FL;
-    integral_FR += error_FR;
-    integral_BL += error_BL;
-    integral_BR += error_BR;
+    integral_FL += error_FL * deltaTime;
+    integral_FR += error_FR * deltaTime;
+    integral_BL += error_BL * deltaTime;
+    integral_BR += error_BR * deltaTime;
 
     // Prevent integral windup
     integral_FL = constrain(integral_FL, -1000, 1000);
@@ -96,10 +110,10 @@ void performPIDControl(const float targetVelocity_FL, const float targetVelocity
     integral_BR = constrain(integral_BR, -1000, 1000);
 
     // Calculate derivatives
-    const float derivative_FL = error_FL - previousError_FL;
-    const float derivative_FR = error_FR - previousError_FR;
-    const float derivative_BL = error_BL - previousError_BL;
-    const float derivative_BR = error_BR - previousError_BR;
+    const float derivative_FL = (error_FL - previousError_FL) / deltaTime;
+    const float derivative_FR = (error_FR - previousError_FR) / deltaTime;
+    const float derivative_BL = (error_BL - previousError_BL) / deltaTime;
+    const float derivative_BR = (error_BR - previousError_BR) / deltaTime;
 
     // Calculate outputs
     const float output_FL = (Kp * error_FL) + (Ki * integral_FL) + (Kd * derivative_FL);
@@ -110,11 +124,24 @@ void performPIDControl(const float targetVelocity_FL, const float targetVelocity
     // Update motor speeds
     updateMotorSpeed(output_FL, output_FR, output_BL, output_BR);
 
-    // Store current errors for next loop
+    // Stop motors if target velocity is 0
+    if (targetVelocity_FL == 0) front_motors.stopA();
+    if (targetVelocity_FR == 0) front_motors.stopB();
+    if (targetVelocity_BL == 0) back_motors.stopA();
+    if (targetVelocity_BR == 0) back_motors.stopB();
+
+    // Store current errors and positions for next loop
     previousError_FL = error_FL;
     previousError_FR = error_FR;
     previousError_BL = error_BL;
     previousError_BR = error_BR;
+
+    prevPosition_FL = currentPosition_FL;
+    prevPosition_FR = currentPosition_FR;
+    prevPosition_BL = currentPosition_BL;
+    prevPosition_BR = currentPosition_BR;
+
+    prevTime = currentTime;
 }
 
 void updateMotorSpeed(const float output_FL, const float output_FR, const float output_BL, const float output_BR)
@@ -124,20 +151,56 @@ void updateMotorSpeed(const float output_FL, const float output_FR, const float 
     back_motors.setSpeedA(constrain(abs(output_BL), 0, 255));
     back_motors.setSpeedB(constrain(abs(output_BR), 0, 255));
 
-    output_FL >= 0 ? front_motors.forwardA() : front_motors.backwardA();
-    output_FR >= 0 ? front_motors.forwardB() : front_motors.backwardB();
-    output_BL >= 0 ? back_motors.forwardA() : back_motors.backwardA();
-    output_BR >= 0 ? back_motors.forwardB() : back_motors.backwardB();
+    if (output_FL >= 0)
+    {
+        front_motors.forwardA();
+    } else
+    {
+        front_motors.backwardA();
+    }
+
+    if (output_FR >= 0)
+    {
+        front_motors.forwardB();
+    } else
+    {
+        front_motors.backwardB();
+    }
+
+    if (output_BL >= 0)
+    {
+        back_motors.forwardA();
+    }
+    else
+    {
+        back_motors.backwardA();
+    }
+
+    if (output_BR >= 0)
+    {
+        back_motors.forwardB();
+    }
+    else
+    {
+        back_motors.backwardB();
+    }
 }
 
 void onDataReceived(const String& data)
 {
-    JsonDocument doc;
+    const int commaIndex1 = data.indexOf(',');
+    const int commaIndex2 = data.indexOf(',', commaIndex1 + 1);
+    const int commaIndex3 = data.indexOf(',', commaIndex2 + 1);
 
-    if (deserializeJson(doc, data)) {
-        Serial.println(F("deserializeJson() failed"));
+    if (commaIndex1 == -1 || commaIndex2 == -1 || commaIndex3 == -1) {
+        Serial.println(F("Invalid CSV format"));
         return;
     }
 
-    performPIDControl(doc["wheel_FL"], doc["wheel_FR"], doc["wheel_BL"], doc["wheel_BR"]);
+    const float wheel1 = data.substring(0, commaIndex1).toFloat();
+    const float wheel2 = data.substring(commaIndex1 + 1, commaIndex2).toFloat();
+    const float wheel3 = data.substring(commaIndex2 + 1, commaIndex3).toFloat();
+    const float wheel4 = data.substring(commaIndex3 + 1).toFloat();
+
+    performPIDControl(wheel1, wheel2, wheel3, wheel4);
 }
