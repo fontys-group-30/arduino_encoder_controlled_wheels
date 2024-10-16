@@ -112,10 +112,7 @@ void sendEncoderValues()
     const float velocity_BR = (currentPosition_BR - prevPosition_BR) / deltaTime;
 
     // Format the values as a CSV string
-    const String message = "OUT: " + String(currentPosition_FL) + "," + String(currentPosition_FR * -1) + "," +
-                           String(currentPosition_BL) + "," + String(currentPosition_BR * -1) + "," +
-                           String(velocity_FL) + "," + String(velocity_FR * -1) + "," +
-                           String(velocity_BL) + "," + String(velocity_BR * -1) + "\n";
+    const String message = "OUT: " + String(velocity_FL) + "," + String(velocity_FR * -1) + "," + String(velocity_BL) + "," + String(velocity_BR * -1) + "\n";
 
     // Convert the message to a UTF-8 encoded string
     const char* utf8EncodedMessage = message.c_str();
