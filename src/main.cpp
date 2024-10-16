@@ -5,33 +5,46 @@
 #include <Encoder.h>
 
 // Pins for L298N motor driver (front left)
-#define EN_A 9
-#define IN1_A 7
-#define IN2_A 8
+#define EN_A 4
+#define IN1_A 6
+#define IN2_A 5
 
 // Pins for L298N motor driver (front right)
-#define EN_B 4
-#define IN1_B 5
-#define IN2_B 6
+#define EN_B 9
+#define IN1_B 8
+#define IN2_B 7
 
 // Pins for L298N motor driver (back left)
 #define EN_C 10
-#define IN1_C 52
-#define IN2_C 53
+#define IN1_C 53
+#define IN2_C 52
 
 // Pins for L298N motor driver (back right)
 #define EN_D 11
-#define IN1_D 50
-#define IN2_D 51
+#define IN1_D 51
+#define IN2_D 50
+
+// Encoder pins
+#define FL_ENCODER_A 3
+#define FL_ENCODER_B 37
+
+#define FR_ENCODER_A 2
+#define FR_ENCODER_B 36
+
+#define BL_ENCODER_A 19
+#define BL_ENCODER_B 35
+
+#define BR_ENCODER_A 18
+#define BR_ENCODER_B 34
 
 L298NX2 front_motors(EN_A, IN1_A, IN2_A, EN_B, IN1_B, IN2_B);
 L298NX2 back_motors(EN_C, IN1_C, IN2_C, EN_D, IN1_D, IN2_D);
 
 // Encoder pins
-Encoder front_right_encoder(2, 36);
-Encoder front_left_encoder(3, 37);
-Encoder back_right_encoder(18, 34);
-Encoder back_left_encoder(19, 35);
+Encoder front_left_encoder(FL_ENCODER_A, FL_ENCODER_B);
+Encoder front_right_encoder(FR_ENCODER_A, FR_ENCODER_B);
+Encoder back_left_encoder(BL_ENCODER_A, BL_ENCODER_B);
+Encoder back_right_encoder(BR_ENCODER_A, BR_ENCODER_B);
 
 // PID constants
 float Kp = 3.1; // Proportional gain
@@ -52,6 +65,7 @@ void readEncoder();
 void performPIDControl(float targetVelocity_FL, float targetVelocity_FR, float targetVelocity_BL, float targetVelocity_BR);
 void updateMotorSpeed(float output_FL, float output_FR, float output_BL, float output_BR);
 void onDataReceived(const String& data);
+void EncoderValues();
 
 void setup()
 {
@@ -59,14 +73,62 @@ void setup()
     setupMotors(); // Initialize motors
 }
 
+
+void sendEncoderValues();
+
 void loop()
 {
+    static unsigned long lastSendTime = 0;
+    const unsigned long currentTime = millis();
+
+    if (currentTime - lastSendTime >= 500) // Send every half second
+    {
+        sendEncoderValues();
+        lastSendTime = currentTime;
+    }
+
     if (Serial.available())
     {
         const String data = Serial.readStringUntil('\n');
         onDataReceived(data);
     }
-    delay(10); // Small delay to prevent overload
+}
+
+void sendEncoderValues()
+{
+    const long currentTime = millis();
+    const float deltaTime = (currentTime - prevTime) / 1000.0;
+
+    // Read current encoder positions
+    const long currentPosition_FL = front_left_encoder.read();
+    const long currentPosition_FR = front_right_encoder.read();
+    const long currentPosition_BL = back_left_encoder.read();
+    const long currentPosition_BR = back_right_encoder.read();
+
+    // Calculate velocities
+    const float velocity_FL = (currentPosition_FL - prevPosition_FL) / deltaTime;
+    const float velocity_FR = (currentPosition_FR - prevPosition_FR) / deltaTime;
+    const float velocity_BL = (currentPosition_BL - prevPosition_BL) / deltaTime;
+    const float velocity_BR = (currentPosition_BR - prevPosition_BR) / deltaTime;
+
+    // Format the values as a CSV string
+    const String message = "OUT: " + String(currentPosition_FL) + "," + String(currentPosition_FR * -1) + "," +
+                           String(currentPosition_BL) + "," + String(currentPosition_BR * -1) + "," +
+                           String(velocity_FL) + "," + String(velocity_FR * -1) + "," +
+                           String(velocity_BL) + "," + String(velocity_BR * -1) + "\n";
+
+    // Convert the message to a UTF-8 encoded string
+    const char* utf8EncodedMessage = message.c_str();
+
+    // Send the UTF-8 encoded string over serial
+    Serial.print(utf8EncodedMessage);
+
+    // Update previous positions and time
+    prevPosition_FL = currentPosition_FL;
+    prevPosition_FR = currentPosition_FR;
+    prevPosition_BL = currentPosition_BL;
+    prevPosition_BR = currentPosition_BR;
+    prevTime = currentTime;
 }
 
 void setupMotors()
@@ -78,7 +140,7 @@ void setupMotors()
 void performPIDControl(const float targetVelocity_FL, const float targetVelocity_FR, const float targetVelocity_BL, const float targetVelocity_BR)
 {
     const long currentTime = millis();
-    const float deltaTime = (currentTime - prevTime) / 1000.0;  // Time in seconds
+    const float deltaTime = (currentTime - prevTime) / 1000.0;
 
     // Read current encoder positions
     const long currentPosition_FL = front_left_encoder.read();
@@ -140,67 +202,38 @@ void performPIDControl(const float targetVelocity_FL, const float targetVelocity
     prevPosition_FR = currentPosition_FR;
     prevPosition_BL = currentPosition_BL;
     prevPosition_BR = currentPosition_BR;
-
     prevTime = currentTime;
 }
 
 void updateMotorSpeed(const float output_FL, const float output_FR, const float output_BL, const float output_BR)
 {
-    front_motors.setSpeedA(constrain(abs(output_FL), 0, 255));
-    front_motors.setSpeedB(constrain(abs(output_FR), 0, 255));
-    back_motors.setSpeedA(constrain(abs(output_BL), 0, 255));
-    back_motors.setSpeedB(constrain(abs(output_BR), 0, 255));
+    front_motors.setSpeedA(constrain(abs(output_FL), 100, 255));
+    front_motors.setSpeedB(constrain(abs(output_FR), 100, 255));
+    back_motors.setSpeedA(constrain(abs(output_BL), 100, 255));
+    back_motors.setSpeedB(constrain(abs(output_BR), 100, 255));
 
-    if (output_FL >= 0)
-    {
-        front_motors.forwardA();
-    } else
-    {
-        front_motors.backwardA();
-    }
-
-    if (output_FR >= 0)
-    {
-        front_motors.forwardB();
-    } else
-    {
-        front_motors.backwardB();
-    }
-
-    if (output_BL >= 0)
-    {
-        back_motors.forwardA();
-    }
-    else
-    {
-        back_motors.backwardA();
-    }
-
-    if (output_BR >= 0)
-    {
-        back_motors.forwardB();
-    }
-    else
-    {
-        back_motors.backwardB();
-    }
+    output_FL >= 0 ? front_motors.forwardA() : front_motors.backwardA();
+    output_FR >= 0 ? front_motors.forwardB() : front_motors.backwardB();
+    output_BL >= 0 ? back_motors.forwardA() : back_motors.backwardA();
+    output_BR >= 0 ? back_motors.forwardB() : back_motors.backwardB();
 }
 
 void onDataReceived(const String& data)
 {
-    const int commaIndex1 = data.indexOf(',');
-    const int commaIndex2 = data.indexOf(',', commaIndex1 + 1);
-    const int commaIndex3 = data.indexOf(',', commaIndex2 + 1);
+    if (!data.startsWith("IN: ")) return;
 
-    if (commaIndex1 == -1 || commaIndex2 == -1 || commaIndex3 == -1) {
-        Serial.println(F("Invalid CSV format"));
-        return;
-    }
+    const String csvData = data.substring(3);
 
-    const float wheel1 = data.substring(0, commaIndex1).toFloat();
-    const float wheel2 = data.substring(commaIndex1 + 1, commaIndex2).toFloat();
-    const float wheel3 = data.substring(commaIndex2 + 1, commaIndex3).toFloat();
-    const float wheel4 = data.substring(commaIndex3 + 1).toFloat();
+    const int commaIndex1 = csvData.indexOf(',');
+    const int commaIndex2 = csvData.indexOf(',', commaIndex1 + 1);
+    const int commaIndex3 = csvData.indexOf(',', commaIndex2 + 1);
 
-    performPIDControl(wheel1, wheel2, wheel3, wheel4);
+    if (commaIndex1 == -1 || commaIndex2 == -1 || commaIndex3 == -1) return;
+
+    const float targetVelocity_FL = csvData.substring(0, commaIndex1).toFloat();
+    const float targetVelocity_FR = csvData.substring(commaIndex1 + 1, commaIndex2).toFloat();
+    const float targetVelocity_BL = csvData.substring(commaIndex2 + 1, commaIndex3).toFloat();
+    const float targetVelocity_BR = csvData.substring(commaIndex3 + 1).toFloat();
+
+    performPIDControl(targetVelocity_FL, targetVelocity_FR, targetVelocity_BL, targetVelocity_BR);
 }
